@@ -201,6 +201,43 @@ def _strip_leading_noise(s: str) -> str:
     return "\n".join(lines[i:])
 
 
+def cut_to_first_balanced_prefix(block: str, start_literal: str) -> str:
+    """
+    Return the shortest prefix of 'block' that:
+      - starts at the given role's @if ... {  (already true for our slices)
+      - returns the brace depth to 0 at least once after opening
+    We count braces only on lines that look like Razor/C# code,
+    same heuristic as brace_balance().
+    """
+    lines = block.splitlines(keepends=True)
+    depth = 0
+    seen_open = False
+    cut_pos = None
+    pos = 0
+    for ln in lines:
+        ls = ln.lstrip()
+        looks = (
+            ls.startswith("@") or ls.startswith("{") or ls.startswith("}") or
+            "@if" in ls or "@foreach" in ls or "@for " in ls or
+            "@switch" in ls or ls.startswith("@code")
+        )
+        if looks:
+            for ch in ln:
+                if ch == "{":
+                    depth += 1
+                    seen_open = True
+                elif ch == "}":
+                    depth -= 1
+                # guard: never go negative
+                if depth < 0:
+                    depth = 0
+            if seen_open and depth == 0:
+                cut_pos = pos + len(ln)
+        pos += len(ln)
+    if cut_pos is not None:
+        return block[:cut_pos]
+    return block
+
 # ---------------- extractors ----------------
 
 def extract_student(monolith: str) -> str:
@@ -239,22 +276,25 @@ def extract_company(monolith: str) -> str:
     if s_start is None:
         fail("Company start not found")
 
-    _, btn_end = find_ws_insensitive(monolith[s_start:], '@onclick="CloseModalResearchGroupDetailsOnEyeIconWhenSearchForResearchGroupsAsCompany"')
+    _, btn_end = find_ws_insensitive(
+        monolith[s_start:],
+        '@onclick="CloseModalResearchGroupDetailsOnEyeIconWhenSearchForResearchGroupsAsCompany"'
+    )
     if btn_end is None:
         fail("Company end anchor button not found")
     btn_abs_end = s_start + btn_end
 
-    closing = re.compile(
-    r"</div>\s*</div>\s*</div>\s*</div>\s*}",
-    re.DOTALL
-    )
-
+    # CANONICAL end: four </div> then exactly one closing brace
+    closing = re.compile(r"</div>\s*</div>\s*</div>\s*</div>\s*}", re.DOTALL)
     m = closing.search(monolith[btn_abs_end:])
     if not m:
         fail("Company closing structure not found")
-    expected = monolith[s_start:btn_abs_end + m.end()]
 
+    expected = monolith[s_start:btn_abs_end + m.end()]
+    # NEW: cut to first balanced prefix in case extra braces snuck in
+    expected = cut_to_first_balanced_prefix(expected, "@if (!isInitializedAsCompanyUser)")
     return validate_and_maybe_fix("Company", expected, "@if (!isInitializedAsCompanyUser)")
+
 
 def extract_professor(monolith: str) -> str:
     s_start, _ = find_ws_insensitive(monolith, '@if (!isInitializedAsProfessorUser)\n{')
