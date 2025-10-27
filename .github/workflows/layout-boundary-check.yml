@@ -1,0 +1,33 @@
+name: Layout boundary check
+
+on:
+  pull_request:
+    paths:
+      - "**/MainLayout*.razor"
+      - "**/*LayoutSection.razor"
+      - ".github/workflows/layout-boundary-check.yml"
+      - "scripts/check_layout_sections.py"
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run boundary checker
+        env:
+          # Adjust if your files live elsewhere
+          MONOLITH_PATH: "MainLayout.razor"
+          STUDENT_PATH: "StudentLayoutSection.razor"
+          COMPANY_PATH: "CompanyLayoutSection.razor"
+          PROFESSOR_PATH: "ProfessorLayoutSection.razor"
+          RESEARCH_PATH: "ResearchGroupLayoutSection.razor"
+        run: |
+          python -u scripts/check_layout_sections.py
