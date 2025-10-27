@@ -104,6 +104,7 @@ def validate_and_maybe_fix(name: str, expected: str, start_literal: str) -> str:
     if ok:
         return expected
     delta = opens - closes
+
     if delta > 0 and AUTO_FIX_BRACES:
         fixed = expected.rstrip() + ("\n" + "}" * delta) + "\n"
         ok2, o2, c2 = brace_balance(fixed)
@@ -111,7 +112,23 @@ def validate_and_maybe_fix(name: str, expected: str, start_literal: str) -> str:
             print(f"[INFO] {name}: appended {delta} closing brace(s).")
             return fixed
         fail(f"{name}: brace auto-fix failed (opens={o2}, closes={c2})")
+
+    if delta < 0:
+        # trim surplus trailing braces if present
+        need = -delta
+        t = expected.rstrip()
+        trimmed = 0
+        while trimmed < need and t.endswith("}"):
+            t = t[:-1].rstrip()
+            trimmed += 1
+        if trimmed == need:
+            ok2, o2, c2 = brace_balance(t)
+            if ok2:
+                print(f"[INFO] {name}: trimmed {trimmed} surplus closing brace(s).")
+                return t
+        fail(f"{name}: brace mismatch (opens={opens}, closes={closes}). Surplus closers not only at EOF.")
     fail(f"{name}: brace mismatch (opens={opens}, closes={closes}). Set AUTO_FIX_BRACES=true to auto-append missing '}}'.")
+
 
 def compare(section_name: str, expected: str, split_file: Path):
     got_raw = read(split_file)
@@ -228,10 +245,10 @@ def extract_company(monolith: str) -> str:
     btn_abs_end = s_start + btn_end
 
     closing = re.compile(
-    r"</div>\s*</div>\s*</div>\s*</div>\s*}"          # canonical role-only end
-    r"(?:\s*</div>\s*}\s*}\s*)?",                     # optional outer: </div> } }
+    r"</div>\s*</div>\s*</div>\s*</div>\s*}",
     re.DOTALL
     )
+
     m = closing.search(monolith[btn_abs_end:])
     if not m:
         fail("Company closing structure not found")
