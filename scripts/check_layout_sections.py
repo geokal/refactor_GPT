@@ -38,10 +38,14 @@ def find_ws_insensitive(hay: str, snippet: str, start=0):
     return (start + m.start(), start + m.end()) if m else (None, None)
 
 def strip_razor_comments(s: str) -> str:
-    s = re.sub(r'@\\*.*?\\*@', '', s, flags=re.S)   # Razor block comments
-    s = re.sub(r'/\\*.*?\\*/', '', s, flags=re.S)   # C# block comments
-    s = re.sub(r'//.*', '', s)                      # C# line comments
+    # Razor block comments
+    s = re.sub(r'@\*.*?\*@', '', s, flags=re.S)
+    # C# block comments
+    s = re.sub(r'/\*.*?\*/', '', s, flags=re.S)
+    # C# line comments
+    s = re.sub(r'//.*', '', s)
     return s
+
 
 def brace_balance(block: str) -> tuple[bool, int, int]:
     lines = block.splitlines()
@@ -266,6 +270,8 @@ def extract_student(monolith: str) -> str:
         fail("Student closing structure not found")
 
     expected = monolith[s_start:btn_abs_end + m.end()]
+    ok, o, c = brace_balance(expected)
+    print(f"[DBG] {os.name}: opens={o} closes={c}")
     return validate_and_maybe_fix("Student", expected, "@if (!isInitializedAsStudentUser)")
 
 
@@ -293,6 +299,8 @@ def extract_company(monolith: str) -> str:
     expected = monolith[s_start:btn_abs_end + m.end()]
     # NEW: cut to first balanced prefix in case extra braces snuck in
     expected = cut_to_first_balanced_prefix(expected, "@if (!isInitializedAsCompanyUser)")
+    ok, o, c = brace_balance(expected)
+    print(f"[DBG] {os.name}: opens={o} closes={c}")
     return validate_and_maybe_fix("Company", expected, "@if (!isInitializedAsCompanyUser)")
 
 
@@ -321,6 +329,8 @@ def extract_professor(monolith: str) -> str:
         fail("Professor closing structure not found")
 
     expected = monolith[s_start:canv_abs_end + m.end()]
+    ok, o, c = brace_balance(expected)
+    print(f"[DBG] {os.name}: opens={o} closes={c}")
     return validate_and_maybe_fix("Professor", expected, "@if (!isInitializedAsProfessorUser)")
 
 def extract_research(monolith: str) -> str:
@@ -340,6 +350,8 @@ def extract_research(monolith: str) -> str:
         fail("ResearchGroup closing structure not found")
 
     expected = monolith[s_start:btn_abs_end + m.end()]
+    ok, o, c = brace_balance(expected)
+    print(f"[DBG] {os.name}: opens={o} closes={c}")
     return validate_and_maybe_fix("ResearchGroup", expected, "@if (!isInitializedAsResearchGroupUser)")
 
 # ---------------- main ----------------
