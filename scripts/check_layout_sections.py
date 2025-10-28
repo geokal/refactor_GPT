@@ -242,6 +242,92 @@ def cut_to_first_balanced_prefix(block: str, start_literal: str) -> str:
         return block[:cut_pos]
     return block
 
+def extract_if_else_chain(src: str, start_idx: int) -> str:
+    """
+    Starting at the '@if (...) {' token at start_idx, return the substring
+    that spans the whole if/else-if/else chain. Handles nested braces by counting.
+    """
+    n = len(src)
+    i = start_idx
+
+    # find the first '{' after '@if (...)'
+    m = re.search(r'@if\s*\([^)]*\)\s*\{', src[i:], flags=re.DOTALL)
+    if not m:
+        fail("extract_if_else_chain: cannot find '@if (...) {' from start")
+    i_if_open = i + m.end() - 1  # position at the '{'
+    depth = 1
+    j = i_if_open + 1
+
+    def skip_ws_and_comments(k: int) -> int:
+        while k < n:
+            # whitespace
+            while k < n and src[k].isspace():
+                k += 1
+            # HTML comment
+            if src.startswith("<!--", k):
+                t = src.find("-->", k)
+                if t == -1:
+                    return k
+                k = t + 3
+                continue
+            # Razor block comment
+            if src.startswith("@*", k):
+                t = src.find("*@", k)
+                if t == -1:
+                    return k
+                k = t + 2
+                continue
+            break
+        return k
+
+    # walk to close the first 'if' body
+    while j < n and depth > 0:
+        ch = src[j]
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+        j += 1
+
+    # j now is just after the closing '}' of the if-body
+    end_idx = j
+
+    # chain handling: if next token is 'else', include its body too
+    while True:
+        k = skip_ws_and_comments(end_idx)
+        if k >= n or not src.startswith("else", k):
+            break
+
+        k += len("else")
+        k = skip_ws_and_comments(k)
+
+        if src.startswith("if", k):
+            # else if (...) { ... }
+            m2 = re.search(r'if\s*\([^)]*\)\s*\{', src[k:], flags=re.DOTALL)
+            if not m2:
+                break
+            brace_pos = k + m2.end() - 1
+        else:
+            # plain else { ... }
+            if k >= n or src[k] != '{':
+                break
+            brace_pos = k
+
+        # walk this body
+        depth = 1
+        j2 = brace_pos + 1
+        while j2 < n and depth > 0:
+            ch = src[j2]
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+            j2 += 1
+        end_idx = j2
+
+    return src[start_idx:end_idx]
+
+
 # ---------------- extractors ----------------
 
 def extract_student(monolith: str) -> str:
@@ -282,26 +368,12 @@ def extract_company(monolith: str) -> str:
     if s_start is None:
         fail("Company start not found")
 
-    _, btn_end = find_ws_insensitive(
-        monolith[s_start:],
-        '@onclick="CloseModalResearchGroupDetailsOnEyeIconWhenSearchForResearchGroupsAsCompany"'
-    )
-    if btn_end is None:
-        fail("Company end anchor button not found")
-    btn_abs_end = s_start + btn_end
+    # Extract the full if/else chain for the Company section
+    expected = extract_if_else_chain(monolith, s_start)
 
-    # CANONICAL end: four </div> then exactly one closing brace
-    closing = re.compile(r"</div>\s*</div>\s*</div>\s*</div>\s*}", re.DOTALL)
-    m = closing.search(monolith[btn_abs_end:])
-    if not m:
-        fail("Company closing structure not found")
-
-    expected = monolith[s_start:btn_abs_end + m.end()]
-    # NEW: cut to first balanced prefix in case extra braces snuck in
-    expected = cut_to_first_balanced_prefix(expected, "@if (!isInitializedAsCompanyUser)")
-    ok, o, c = brace_balance(expected)
-    print(f"[DBG] {os.name}: opens={o} closes={c}")
-    return validate_and_maybe_fix("Company", expected, "@if (!isInitializedAsCompanyUser)")
+    # Still validate and normalize
+    expected = validate_and_maybe_fix("Company", expected, "@if (!isInitializedAsCompanyUser)")
+    return expected
 
 
 def extract_professor(monolith: str) -> str:
@@ -311,26 +383,17 @@ def extract_professor(monolith: str) -> str:
     if s_start is None:
         fail("Professor start not found")
 
-    _, canv_end = find_ws_insensitive(monolith[s_start:], '<canvas id="skillsChart"')
-    if canv_end is None:
-        fail("Professor end anchor canvas not found")
-    canv_abs_end = s_start + canv_end
+    # 1) balanced if/else chain
+    expected = extract_if_else_chain(monolith, s_start)
 
-    # A) </div></div></div></div><br/><br/>
-    tail_a = re.compile(r"</div>\s*</div>\s*</div>\s*</div>\s*<br/>\s*<br/>\s*", re.DOTALL)
-    # B) </div></div> } </div></div></div> <br/><br/>
-    tail_b = re.compile(r"</div>\s*</div>\s*}\s*</div>\s*</div>\s*</div>\s*<br/>\s*<br/>\s*", re.DOTALL)
-    # C) </div></div></div> <br/><br/> }
-    tail_c = re.compile(r"</div>\s*</div>\s*</div>\s*<br/>\s*<br/>\s*}\s*", re.DOTALL)
+    # 2) optionally absorb trailing <br/> lines right after the chain
+    tail = monolith[s_start + len(expected):]
+    m = re.match(r'\s*(?:<br/>\s*){1,4}', tail, flags=re.DOTALL)
+    if m:
+        expected += m.group(0)
 
-    segment = monolith[canv_abs_end:]
-    m = tail_a.search(segment) or tail_b.search(segment) or tail_c.search(segment)
-    if not m:
-        fail("Professor closing structure not found")
-
-    expected = monolith[s_start:canv_abs_end + m.end()]
     ok, o, c = brace_balance(expected)
-    print(f"[DBG] {os.name}: opens={o} closes={c}")
+    print(f"[DBG] Professor: opens={o} closes={c}")
     return validate_and_maybe_fix("Professor", expected, "@if (!isInitializedAsProfessorUser)")
 
 def extract_research(monolith: str) -> str:
@@ -340,19 +403,11 @@ def extract_research(monolith: str) -> str:
     if s_start is None:
         fail("ResearchGroup start not found")
 
-    _, btn_end = find_ws_insensitive(monolith[s_start:], '@onclick="ClosePatentsModal"')
-    if btn_end is None:
-        fail("ResearchGroup end anchor button not found")
-    btn_abs_end = s_start + btn_end
-
-    m = re.search(r"</div>\s*</div>\s*</div>\s*</div>\s*}", monolith[btn_abs_end:], flags=re.DOTALL)
-    if not m:
-        fail("ResearchGroup closing structure not found")
-
-    expected = monolith[s_start:btn_abs_end + m.end()]
+    expected = extract_if_else_chain(monolith, s_start)
     ok, o, c = brace_balance(expected)
-    print(f"[DBG] {os.name}: opens={o} closes={c}")
+    print(f"[DBG] ResearchGroup: opens={o} closes={c}")
     return validate_and_maybe_fix("ResearchGroup", expected, "@if (!isInitializedAsResearchGroupUser)")
+
 
 # ---------------- main ----------------
 
